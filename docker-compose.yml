@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # 1. Banco de Dados PostgreSQL
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: user_mixmeet
+      POSTGRES_PASSWORD: password_mixmeet
+      POSTGRES_DB: mixmeet_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Cache Redis (Para gerenciar códigos de verificação)
+  redis:
+    image: redis:7-alpine
+    restart: always
+
+  # 3. Serviço Node.js/WhatsApp - MixMeet.WhatsApp
+  whatsapp-service:
+    build:
+      context: ./MixMeet.WhatsApp
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+    mem_limit: 512m
+    ports:
+      - "3001:3001"
+    command: sh -c "npm install && node index.js"
+
+  # 4. API Python - MixMeet.Auth (Porta 8081)
+  auth-api:
+    build:
+      context: ./MixMeet.Auth
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081" 
+    depends_on:
+      - redis
+      - whatsapp-service
+    environment:
+      SECRET_KEY: "chave_super_secreta_mixmeet_2025" 
+      WHATSAPP_SERVICE_URL: "http://whatsapp-service:3001"
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081"]
+
+  # 5. API C# - MixMeet.Reservas (Porta 8080)
+  reservas-api:
+    build:
+      context: ./MixMeet.Reservas
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    environment:
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=mixmeet_db;Username=user_mixmeet;Password=password_mixmeet"
+      ASPNETCORE_ENVIRONMENT: Development
+      JWT_SECRET_KEY: "chave_super_secreta_mixmeet_2025" 
+    command: sh -c "sleep 10 && dotnet MixMeet.Reservas.dll"
+    restart: always # Garante que ele volte se o banco cair
+
+volumes:
+  postgres_data:
